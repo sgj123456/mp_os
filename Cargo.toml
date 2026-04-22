@@ -1,0 +1,23 @@
+[package]
+name = "mp_os"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mp_os"
+path = "src/main.rs"
+test = false
+bench = false
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+opt-level = "z"
+lto = true
+codegen-units = 1
+
+[dependencies]
+riscv = { version = "0.16.0", features = ["s-mode"] }
+sbi-rt = { version = "0.0.3" }
