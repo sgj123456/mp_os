@@ -2,7 +2,6 @@
 
 use sbi_rt::{system_reset, NoReason, Shutdown};
 
-use crate::println;
 use core::panic::PanicInfo;
 
 #[panic_handler]

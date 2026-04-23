@@ -1,22 +1,86 @@
 #![no_std]
 #![no_main]
-mod config;
+
+use log::*;
+use riscv::asm::wfi;
+
+#[macro_use]
 mod console;
-mod lang_items;
-mod timer;
-mod trap;
+pub mod config;
+pub mod lang_items;
+pub mod logging;
+pub mod task;
+pub mod timer;
+pub mod trap;
 
-use riscv::register::{
-    sie, sscratch, sstatus,
-    stvec::{self, Stvec, TrapMode},
-};
-
-use crate::trap::trap_entry;
-
+/// clear BSS segment
+fn clear_bss() {
+    extern "C" {
+        fn sbss();
+        fn ebss();
+    }
+    unsafe {
+        core::slice::from_raw_parts_mut(
+            sbss as *const () as usize as *mut u8,
+            ebss as *const () as usize - sbss as *const () as usize,
+        )
+        .fill(0);
+    }
+}
 extern "C" {
-    static __bss_start: u8;
-    static __bss_end: u8;
-    static __stack_top: u8;
+    fn stext(); // begin addr of text segment
+    fn etext(); // end addr of text segment
+    fn srodata(); // start addr of Read-Only data segment
+    fn erodata(); // end addr of Read-Only data ssegment
+    fn sdata(); // start addr of data segment
+    fn edata(); // end addr of data segment
+    fn sbss(); // start addr of BSS segment
+    fn ebss(); // end addr of BSS segment
+    fn boot_stack_lower_bound(); // stack lower bound
+    fn boot_stack_top(); // stack top
+}
+/// kernel log info
+fn kernel_log_info() {
+    logging::init();
+    println!("[kernel] Hello, world!");
+    trace!(
+        "[kernel] .text [{:#x}, {:#x})",
+        stext as *const () as usize,
+        etext as *const () as usize
+    );
+    debug!(
+        "[kernel] .rodata [{:#x}, {:#x})",
+        srodata as *const () as usize, erodata as *const () as usize
+    );
+    info!(
+        "[kernel] .data [{:#x}, {:#x})",
+        sdata as *const () as usize, edata as *const () as usize
+    );
+    warn!(
+        "[kernel] boot_stack top=bottom={:#x}, lower_bound={:#x}",
+        boot_stack_top as *const () as usize, boot_stack_lower_bound as *const () as usize
+    );
+    error!(
+        "[kernel] .bss [{:#x}, {:#x})",
+        sbss as *const () as usize, ebss as *const () as usize
+    );
+}
+
+#[no_mangle]
+/// the rust entry-point of os
+pub fn rust_main() -> ! {
+    clear_bss();
+    kernel_log_info();
+    trap::init();
+    timer::set_next_trigger();
+    trap::enable_timer_interrupt();
+    println!("[kernel] timer interrupt enabled");
+    // task::run_first_task();
+    loop {
+        wfi();
+        // println!("[kernel] wakeup from wfi");
+    }
+    panic!("Unreachable in rust_main!");
 }
 
 #[unsafe(naked)]
@@ -24,42 +88,8 @@ extern "C" {
 #[link_section = ".text.entry"]
 pub extern "C" fn _start() {
     core::arch::naked_asm!(
-        "lla sp, {stack_top}",
-        "lla a0, __bss_start",
-        "lla a1, __bss_end",
-        "bgeu a0, a1, 2f",
-        "1:",
-        "sd zero, 0(a0)",
-        "addi a0, a0, 8",
-        "bltu a0, a1, 1b",
-        "2:",
+        "lla sp, {boot_stack_top}",
         "j rust_main",
-        stack_top = sym __stack_top,
+        boot_stack_top = sym boot_stack_top,
     );
-}
-
-#[no_mangle]
-pub extern "C" fn rust_main() {
-    println!("========================================\n");
-    println!("       RISC-V Kernel Booted!\n");
-    println!("========================================\n");
-    println!("Version: v1.0\n");
-    println!("Architecture: RISC-V 64\n");
-    println!("Mode: S-Mode\n");
-
-    unsafe {
-        sscratch::write(__stack_top as usize);
-        stvec::write(Stvec::new(
-            trap_entry as *const () as usize,
-            TrapMode::Direct,
-        ));
-        sstatus::set_sie();
-        sie::set_stimer();
-        timer::set_next_trigger();
-    }
-    println!("timer init done");
-
-    loop {
-        riscv::asm::wfi();
-    }
 }
